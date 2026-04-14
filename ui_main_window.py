@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QFrame, QGroupBox, QScrollArea,
     QDialog, QRadioButton, QSpinBox, QButtonGroup, QMessageBox,
+    QLayout,
 )
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QBrush
@@ -59,7 +60,7 @@ class StartDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("\u767e\u5bb6\u4e50\u6a21\u62df\u5668")
-        self.setFixedSize(380, 300)
+        self.setFixedSize(380, 340)
         self.setStyleSheet("background-color: #1a3a1a; color: white;")
 
         lay = QVBoxLayout(self)
@@ -102,6 +103,20 @@ class StartDialog(QDialog):
         cl.addWidget(self.chips_spin)
         lay.addLayout(cl)
 
+        # Deck count
+        dl = QHBoxLayout()
+        dl.addWidget(QLabel("\u724c\u9774\u526f\u6570:"))
+        self.deck_spin = QSpinBox()
+        self.deck_spin.setRange(1, 20)
+        self.deck_spin.setValue(8)
+        self.deck_spin.setSuffix(" \u526f")
+        self.deck_spin.setStyleSheet(
+            "QSpinBox{background:#2a4a2a;color:white;border:1px solid #4A7A4A;"
+            "border-radius:3px;padding:4px;font-size:14px;}"
+        )
+        dl.addWidget(self.deck_spin)
+        lay.addLayout(dl)
+
         # Start
         btn = QPushButton("\u5f00\u59cb\u6e38\u620f")
         btn.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
@@ -118,6 +133,9 @@ class StartDialog(QDialog):
 
     def get_chips(self) -> int:
         return self.chips_spin.value()
+
+    def get_decks(self) -> int:
+        return self.deck_spin.value()
 
 
 # ------------------------------------------------------------------ #
@@ -308,11 +326,12 @@ class ChipButton(QPushButton):
 # ------------------------------------------------------------------ #
 class BaccaratMainWindow(QMainWindow):
 
-    def __init__(self, mode: str, balance: int):
+    def __init__(self, mode: str, balance: int, num_decks: int = 8):
         super().__init__()
         self.mode = mode
         self.balance = float(balance)
-        self.game = BaccaratGame(mode)
+        self.num_decks = num_decks
+        self.game = BaccaratGame(mode, num_decks)
 
         self.current_bets: dict[str, float] = {}
         self.last_bets: dict[str, float] = {}
@@ -523,14 +542,19 @@ class BaccaratMainWindow(QMainWindow):
         )
         rl = QVBoxLayout(road_grp)
         self.road_scroll = QScrollArea()
-        self.road_scroll.setFixedHeight(56)
-        self.road_scroll.setWidgetResizable(True)
+        self.road_scroll.setFixedHeight(140)
+        self.road_scroll.setWidgetResizable(False)
         self.road_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.road_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.road_scroll.setStyleSheet(f"background:{DARK_BG}; border:none;")
-        self.road_lbl = QLabel('')
-        self.road_lbl.setContentsMargins(6, 4, 6, 4)
-        self.road_scroll.setWidget(self.road_lbl)
+        self._road_container = QWidget()
+        self._road_hlayout = QHBoxLayout(self._road_container)
+        self._road_hlayout.setContentsMargins(4, 4, 4, 4)
+        self._road_hlayout.setSpacing(4)
+        self._road_hlayout.setSizeConstraint(
+            QLayout.SizeConstraint.SetMinAndMaxSize)
+        self.road_scroll.setWidget(self._road_container)
+        self._road_count = 0
         rl.addWidget(self.road_scroll)
 
         # stats
@@ -549,8 +573,10 @@ class BaccaratMainWindow(QMainWindow):
             ('tw', '\u548c\u5c40', 1, 1),
             ('bp', '\u5e84\u5bf9', 2, 0),
             ('pp', '\u95f2\u5bf9', 2, 1),
-            ('streak', '\u8fde\u80dc', 3, 0),
-            ('shoe', '\u724c\u9774', 3, 1),
+            ('l6', '\u5e78\u8fd06', 3, 0),
+            ('l7', '\u95f2\u5e787', 3, 1),
+            ('streak', '\u8fde\u80dc', 4, 0),
+            ('shoe', '\u724c\u9774', 4, 1),
         ]
         for k, nm, r, c in defs:
             lb = QLabel(f"{nm}: 0")
@@ -765,7 +791,8 @@ class BaccaratMainWindow(QMainWindow):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self.mode = dlg.get_mode()
             self.balance = float(dlg.get_chips())
-            self.game = BaccaratGame(self.mode)
+            self.num_decks = dlg.get_decks()
+            self.game = BaccaratGame(self.mode, self.num_decks)
             self.current_bets.clear()
             self.last_bets.clear()
             for c in self.p_cw + self.b_cw:
@@ -777,6 +804,13 @@ class BaccaratMainWindow(QMainWindow):
             for bw in self.bet_ws.values():
                 bw.set_highlight('')
             self.repeat_btn.setEnabled(False)
+            # clear road
+            while self._road_hlayout.count():
+                item = self._road_hlayout.takeAt(0)
+                w = item.widget()
+                if w:
+                    w.deleteLater()
+            self._road_count = 0
             self._update_payouts()
             self._update_all()
         else:
@@ -832,19 +866,52 @@ class BaccaratMainWindow(QMainWindow):
         ok = bool(self.current_bets) and not self.is_dealing
         self.deal_btn.setEnabled(ok)
 
+    # tag colours for road map
+    _TAG_CLR = {
+        '\u5e84\u5bf9': '#FFA726', '\u95f2\u5bf9': '#FFA726',
+        '\u5e78\u8fd06': '#FFD740',
+        '\u4e24\u724c\u5e78\u8fd06': '#FFD740', '\u4e09\u724c\u5e78\u8fd06': '#FFD740',
+        '\u4e24\u724c\u95f2\u5e787': '#4FC3F7', '\u4e09\u724c\u95f2\u5e787': '#4FC3F7',
+    }
+
     def _refresh_road(self):
-        html_parts = []
-        for r in self.game.history[-60:]:
-            if r.winner == 'banker':
-                html_parts.append('<span style="color:#EF5350;font-size:20px;">\u25cf</span>')
-            elif r.winner == 'player':
-                html_parts.append('<span style="color:#42A5F5;font-size:20px;">\u25cf</span>')
-            else:
-                html_parts.append('<span style="color:#66BB6A;font-size:20px;">\u25cf</span>')
-        self.road_lbl.setText(' '.join(html_parts))
+        history = self.game.history
+        # only append new rounds
+        while self._road_count < len(history):
+            r = history[self._road_count]
+            num = self._road_count + 1
+            self._road_count += 1
+
+            wc = {'banker': '#EF5350', 'player': '#42A5F5', 'tie': '#66BB6A'}[r.winner]
+            wt = {'banker': '\u5e84', 'player': '\u95f2', 'tie': '\u548c'}[r.winner]
+
+            tag_lines = ''
+            for t in r.road_tags:
+                c = self._TAG_CLR.get(t, '#CE93D8')
+                tag_lines += f'<br><font color="{c}" size="1">{t}</font>'
+
+            html = (
+                f'<center>'
+                f'<font color="#666" size="1">#{num}</font><br>'
+                f'<font color="{wc}" size="4"><b>{wt}</b></font><br>'
+                f'<font color="#aaa" size="1">'
+                f'\u95f2{r.player_value}:\u5e84{r.banker_value}</font>'
+                f'{tag_lines}'
+                f'</center>'
+            )
+            lbl = QLabel(html)
+            lbl.setFixedWidth(68)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+            lbl.setStyleSheet(
+                f"background:#0a2a0a;border:1px solid #3a5a3a;"
+                f"border-radius:3px;padding:2px;")
+            self._road_hlayout.addWidget(lbl)
+
+        # resize container so scroll area knows the full width
+        self._road_container.adjustSize()
         # auto-scroll right
-        sb = self.road_scroll.horizontalScrollBar()
-        sb.setValue(sb.maximum())
+        QTimer.singleShot(50, lambda: self.road_scroll.horizontalScrollBar().setValue(
+            self.road_scroll.horizontalScrollBar().maximum()))
 
     def _refresh_stats(self):
         h = self.game.history
@@ -856,6 +923,10 @@ class BaccaratMainWindow(QMainWindow):
         tw = sum(1 for r in h if r.winner == 'tie')
         bp = sum(1 for r in h if r.banker_pair)
         pp = sum(1 for r in h if r.player_pair)
+        l6 = sum(1 for r in h if '\u5e78\u8fd06' in r.road_tags)
+        l7 = sum(1 for r in h
+                 if '\u4e24\u724c\u95f2\u5e787' in r.road_tags
+                 or '\u4e09\u724c\u95f2\u5e787' in r.road_tags)
 
         self.s_lbl['total'].setText(f"\u603b\u5c40\u6570: {n}")
         self.s_lbl['bw'].setText(f"\u5e84\u8d62: {bw} ({bw/n*100:.1f}%)")
@@ -863,6 +934,8 @@ class BaccaratMainWindow(QMainWindow):
         self.s_lbl['tw'].setText(f"\u548c\u5c40: {tw} ({tw/n*100:.1f}%)")
         self.s_lbl['bp'].setText(f"\u5e84\u5bf9: {bp}")
         self.s_lbl['pp'].setText(f"\u95f2\u5bf9: {pp}")
+        self.s_lbl['l6'].setText(f"\u5e78\u8fd06: {l6}")
+        self.s_lbl['l7'].setText(f"\u95f2\u5e787: {l7}")
 
         # streak
         last = h[-1].winner

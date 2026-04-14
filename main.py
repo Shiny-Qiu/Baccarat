@@ -15,7 +15,7 @@ def main():
     if dlg.exec() != dlg.DialogCode.Accepted:
         return
 
-    win = BaccaratMainWindow(dlg.get_mode(), dlg.get_chips())
+    win = BaccaratMainWindow(dlg.get_mode(), dlg.get_chips(), dlg.get_decks())
     win.show()
     sys.exit(app.exec())
 

@@ -18,11 +18,13 @@ class RoundResult:
     player_pair: bool = False
     banker_pair: bool = False
     total_cards: int = 0
+    road_tags: list[str] = field(default_factory=list)
 
 
 class BaccaratGame:
-    def __init__(self, mode: str = 'traditional'):
-        self.shoe = Shoe()
+    def __init__(self, mode: str = 'traditional', num_decks: int = 8):
+        self.shoe = Shoe(num_decks)
+        self.num_decks = num_decks
         self.mode = mode  # 'traditional' or 'commission_free'
         self.history: list[RoundResult] = []
 
@@ -103,8 +105,38 @@ class BaccaratGame:
         else:
             r.winner = 'tie'
 
+        r.road_tags = self._build_road_tags(r)
         self.history.append(r)
         return r
+
+    # ------------------------------------------------------------------ #
+    #  Road tags  (outcome flags shown in road map)
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _build_road_tags(r: RoundResult) -> list[str]:
+        tags: list[str] = []
+        if r.banker_pair:
+            tags.append('\u5e84\u5bf9')
+        if r.player_pair:
+            tags.append('\u95f2\u5bf9')
+        # Lucky 6
+        if r.winner == 'banker' and r.banker_value == 6:
+            if len(r.banker_cards) == 2:
+                tags.append('\u5e78\u8fd06')
+                tags.append('\u4e24\u724c\u5e78\u8fd06')
+            else:
+                tags.append('\u5e78\u8fd06')
+                tags.append('\u4e09\u724c\u5e78\u8fd06')
+        # Player Lucky 7
+        if r.winner == 'player' and r.player_value == 7:
+            if len(r.player_cards) == 2:
+                tags.append('\u4e24\u724c\u95f2\u5e787')
+            else:
+                tags.append('\u4e09\u724c\u95f2\u5e787')
+        # Super Lucky 7
+        if r.winner == 'player' and r.player_value == 7 and r.banker_value == 6:
+            tags.append(f'\u8d85\u5e787\u00b7{r.total_cards}\u724c')
+        return tags
 
     # ------------------------------------------------------------------ #
     #  Settlement
