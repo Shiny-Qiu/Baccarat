@@ -19,6 +19,7 @@ class RoundResult:
     banker_pair: bool = False
     total_cards: int = 0
     road_tags: list[str] = field(default_factory=list)
+    new_shoe: bool = False
 
 
 class BaccaratGame:
@@ -36,10 +37,13 @@ class BaccaratGame:
     #  Play one round (pre-compute all cards for animation)
     # ------------------------------------------------------------------ #
     def play_round(self) -> RoundResult:
+        shuffled = False
         if self.shoe.needs_shuffle():
             self.shoe.shuffle()
+            shuffled = True
 
         r = RoundResult()
+        r.new_shoe = shuffled
 
         # Deal: P1, B1, P2, B2
         p1 = self.shoe.deal_one()

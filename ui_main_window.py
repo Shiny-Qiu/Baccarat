@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QFrame, QGroupBox, QScrollArea,
     QDialog, QRadioButton, QSpinBox, QButtonGroup, QMessageBox,
-    QLayout,
+    QLayout, QTextEdit,
 )
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
 from PyQt6.QtGui import QPainter, QColor, QFont, QPen, QBrush
@@ -136,6 +136,146 @@ class StartDialog(QDialog):
 
     def get_decks(self) -> int:
         return self.deck_spin.value()
+
+
+# ------------------------------------------------------------------ #
+#  Session Review Dialog  (replay / review all rounds)
+# ------------------------------------------------------------------ #
+class SessionReviewDialog(QDialog):
+    def __init__(self, logs: list[dict], parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("\u590d\u76d8\u8bb0\u5f55 \u2014 \u6218\u7ee9\u603b\u89c8")
+        self.resize(720, 560)
+        self.setStyleSheet("background-color:#1a3a1a; color:white;")
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(8)
+
+        # ---- summary section ----
+        summary = self._build_summary(logs)
+        sum_lbl = QLabel(summary)
+        sum_lbl.setWordWrap(True)
+        sum_lbl.setStyleSheet(
+            f"background:#0d2a0d; border:1px solid #4A7A4A; border-radius:6px;"
+            f"padding:10px; color:{GOLD}; font-size:13px;")
+        lay.addWidget(sum_lbl)
+
+        # ---- per-round detail ----
+        detail_lbl = QLabel("\u9010\u5c40\u660e\u7ec6\uff08\u6700\u65b0\u5728\u524d\uff09")
+        detail_lbl.setStyleSheet(f"color:{GOLD}; font-size:13px; font-weight:bold;")
+        lay.addWidget(detail_lbl)
+
+        self.text = QTextEdit()
+        self.text.setReadOnly(True)
+        self.text.setStyleSheet(
+            "QTextEdit{background:#0a2a0a; color:#ddd; border:1px solid #4A7A4A;"
+            "border-radius:4px; padding:6px; font-size:12px;}"
+        )
+        self.text.setHtml(self._build_detail_html(logs))
+        lay.addWidget(self.text)
+
+        close_btn = QPushButton("\u5173\u95ed")
+        close_btn.setFixedSize(100, 36)
+        close_btn.setStyleSheet(
+            "QPushButton{background:#F57C00;color:white;border-radius:6px;font-weight:bold;}"
+            "QPushButton:hover{background:#FB8C00;}"
+        )
+        close_btn.clicked.connect(self.accept)
+        lay.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    @staticmethod
+    def _build_summary(logs: list[dict]) -> str:
+        if not logs:
+            return "\u6682\u65e0\u590d\u76d8\u8bb0\u5f55"
+        total_rounds = len(logs)
+        bet_rounds = sum(1 for l in logs if l['total_bet'] > 0)
+        empty_rounds = total_rounds - bet_rounds
+        total_bet = sum(l['total_bet'] for l in logs)
+        total_pnl = sum(l['total_profit'] for l in logs)
+        profits = [l['total_profit'] for l in logs if l['total_profit'] > 0]
+        losses = [l['total_profit'] for l in logs if l['total_profit'] < 0]
+        max_win = max(profits) if profits else 0
+        max_loss = min(losses) if losses else 0
+        final_bal = logs[-1]['balance_after']
+        init_bal = logs[0]['balance_before']
+        num_shoes = max(l.get('shoe_number', 1) for l in logs)
+        sign = '+' if total_pnl >= 0 else ''
+        return (
+            f"\u2584\u2584  \u672c\u573a\u603b\u7ed3  \u2584\u2584\n"
+            f"\u603b\u5c40\u6570: {total_rounds}    "
+            f"\u4e0b\u6ce8\u5c40: {bet_rounds}    "
+            f"\u7a7a\u6ce8\u5c40: {empty_rounds}    "
+            f"\u724c\u9774\u6570: {num_shoes}\n"
+            f"\u521d\u59cb\u7b79\u7801: \u00a5{init_bal:,.0f}    "
+            f"\u6700\u7ec8\u7b79\u7801: \u00a5{final_bal:,.0f}\n"
+            f"\u603b\u4e0b\u6ce8\u989d: \u00a5{total_bet:,.0f}    "
+            f"\u603b\u76c8\u4e8f: {sign}{total_pnl:,.0f}\n"
+            f"\u6700\u5927\u5355\u5c40\u76c8\u5229: +{max_win:,.0f}    "
+            f"\u6700\u5927\u5355\u5c40\u4e8f\u635f: {max_loss:,.0f}"
+        )
+
+    @staticmethod
+    def _build_detail_html(logs: list[dict]) -> str:
+        if not logs:
+            return "<center>\u6682\u65e0\u590d\u76d8\u8bb0\u5f55</center>"
+        winner_clr = {'\u5e84': '#EF5350', '\u95f2': '#42A5F5', '\u548c': '#66BB6A'}
+
+        # group by shoe_number
+        from collections import OrderedDict
+        shoes: dict[int, list[dict]] = OrderedDict()
+        for log in logs:
+            sn = log.get('shoe_number', 1)
+            shoes.setdefault(sn, []).append(log)
+
+        lines = []
+        # iterate shoes in reverse (latest first)
+        for sn in reversed(shoes):
+            shoe_logs = shoes[sn]
+            shoe_pnl = sum(l['total_profit'] for l in shoe_logs)
+            sp_sign = '+' if shoe_pnl >= 0 else ''
+            lines.append(
+                f'<div style="margin:10px 0 4px;padding:4px 8px;'
+                f'background:#1a3a1a;border-left:3px solid {GOLD};font-size:13px;">'
+                f'<b>\u724c\u9774 #{sn}</b>  '
+                f'\u5171 {len(shoe_logs)} \u5c40  '
+                f'\u76c8\u4e8f: {sp_sign}{shoe_pnl:,.0f}'
+                f'</div>')
+
+            for log in reversed(shoe_logs):
+                rn = log['round_no']
+                wc = winner_clr.get(log['winner'], '#ddd')
+                nat = ' [\u4f8b\u724c]' if log['is_natural'] else ''
+
+                if log['total_bet'] > 0:
+                    bets_str = '  '.join(
+                        f"{k}:\u00a5{v:,.0f}" for k, v in log['bets'].items())
+                else:
+                    bets_str = '<i>\u672a\u4e0b\u6ce8</i>'
+
+                if log['settlements']:
+                    settle_parts = [d for _, (_, d) in log['settlements'].items()]
+                    settle_str = '  |  '.join(settle_parts)
+                else:
+                    settle_str = '\u2014'
+
+                tags = '  '.join(log['road_tags']) if log['road_tags'] else ''
+
+                sign = '+' if log['total_profit'] >= 0 else ''
+                lines.append(
+                    f'<div style="margin-bottom:6px;padding:6px;'
+                    f'border:1px solid #3a5a3a;border-radius:4px;background:#0d2a0d;">'
+                    f'<b>#{rn}</b> [{log["mode"]}]  '
+                    f'\u95f2 {log["player_cards"]}({log["player_value"]}\u70b9) vs '
+                    f'\u5e84 {log["banker_cards"]}({log["banker_value"]}\u70b9)  '
+                    f'<font color="{wc}"><b>{log["winner"]}\u80dc{nat}</b></font><br>'
+                    f'\u4e0b\u6ce8: {bets_str}<br>'
+                    f'\u7ed3\u7b97: {settle_str}<br>'
+                    + (f'\u6807\u7b7e: {tags}<br>' if tags else '')
+                    + f'\u76c8\u4e8f: <b>{sign}{log["total_profit"]:,.0f}</b>  '
+                    f'\u4f59\u989d: \u00a5{log["balance_before"]:,.0f} \u2192 '
+                    f'\u00a5{log["balance_after"]:,.0f}'
+                    f'</div>')
+        return ''.join(lines)
 
 
 # ------------------------------------------------------------------ #
@@ -340,6 +480,8 @@ class BaccaratMainWindow(QMainWindow):
         self.current_result = None
         self.deal_steps: list[tuple] = []
         self.deal_idx = 0
+        self.session_logs: list[dict] = []
+        self.shoe_number = 1
 
         self.deal_timer = QTimer(self)
         self.deal_timer.timeout.connect(self._on_deal_step)
@@ -509,6 +651,10 @@ class BaccaratMainWindow(QMainWindow):
         self.clear_btn.clicked.connect(self._clear_bets)
         ctrl.addWidget(self.clear_btn)
 
+        self.review_btn = self._make_btn("\u590d\u76d8\u8bb0\u5f55", 80, 36, '#1565C0', '#1976D2')
+        self.review_btn.clicked.connect(self._show_review)
+        ctrl.addWidget(self.review_btn)
+
         self.deal_btn = QPushButton("\u53d1  \u724c")
         self.deal_btn.setFixedSize(100, 42)
         self.deal_btn.setFont(QFont("Microsoft YaHei", 14, QFont.Weight.Bold))
@@ -555,6 +701,7 @@ class BaccaratMainWindow(QMainWindow):
             QLayout.SizeConstraint.SetMinAndMaxSize)
         self.road_scroll.setWidget(self._road_container)
         self._road_count = 0
+        self._road_shoe_offset = 0
         rl.addWidget(self.road_scroll)
 
         # stats
@@ -664,7 +811,7 @@ class BaccaratMainWindow(QMainWindow):
     #  Deal & Animation
     # ============================================================== #
     def _on_deal(self):
-        if not self.current_bets or self.is_dealing:
+        if self.is_dealing:
             return
         self.is_dealing = True
         self.deal_btn.setEnabled(False)
@@ -738,6 +885,7 @@ class BaccaratMainWindow(QMainWindow):
             self.result_lbl.setStyleSheet("color:#66BB6A; font-size:16px; font-weight:bold;")
 
         # Settle each bet
+        balance_before = self.balance
         settlements = self.game.settle_bets(self.current_bets, r)
         total_profit = 0.0
         details = []
@@ -756,15 +904,49 @@ class BaccaratMainWindow(QMainWindow):
                 self.bet_ws[key].set_highlight('lose')
 
         # Display settlement
-        sign = '+' if total_profit >= 0 else ''
-        self.settle_lbl.setText(
-            f"\u672c\u5c40\u76c8\u4e8f: {sign}{total_profit:.0f}  |  " + '  |  '.join(details))
+        if self.current_bets:
+            sign = '+' if total_profit >= 0 else ''
+            self.settle_lbl.setText(
+                f"\u672c\u5c40\u76c8\u4e8f: {sign}{total_profit:.0f}  |  " + '  |  '.join(details))
+        else:
+            self.settle_lbl.setText("\u672c\u5c40\u672a\u4e0b\u6ce8")
+
+        # Session log
+        # If new shoe was dealt, this round belongs to the next shoe
+        log_shoe = self.shoe_number + 1 if r.new_shoe else self.shoe_number
+        winner_names = {'banker': '\u5e84', 'player': '\u95f2', 'tie': '\u548c'}
+        bet_names = {k: n for k, n, *_ in BET_CONFIG}
+        self.session_logs.append({
+            'round_no': len(self.game.history),
+            'mode': '\u4f20\u7edf' if self.mode == 'traditional' else '\u514d\u4f63',
+            'bets': {bet_names.get(k, k): v for k, v in self.current_bets.items()},
+            'total_bet': sum(self.current_bets.values()),
+            'player_cards': ' '.join(repr(c) for c in r.player_cards),
+            'banker_cards': ' '.join(repr(c) for c in r.banker_cards),
+            'player_value': r.player_value,
+            'banker_value': r.banker_value,
+            'winner': winner_names[r.winner],
+            'is_natural': r.is_natural,
+            'road_tags': list(r.road_tags),
+            'settlements': {bet_names.get(k, k): (p, d)
+                            for k, (p, d) in settlements.items()},
+            'total_profit': total_profit,
+            'balance_before': balance_before,
+            'balance_after': self.balance,
+            'shoe_number': log_shoe,
+        })
 
         self.last_bets = dict(self.current_bets)
         self.current_bets.clear()
 
         self._refresh_bets()
         self._refresh_bal()
+
+        # New shoe: clear road map and bump shoe counter
+        # The current round used the new shoe's cards, so it belongs to the new shoe.
+        if r.new_shoe:
+            self._clear_road_before_current()
+            self.shoe_number += 1
         self._refresh_road()
         self._refresh_stats()
         self.repeat_btn.setEnabled(bool(self.last_bets))
@@ -776,9 +958,14 @@ class BaccaratMainWindow(QMainWindow):
             QTimer.singleShot(800, self._game_over)
 
     def _game_over(self):
+        # Show review first
+        if self.session_logs:
+            dlg = SessionReviewDialog(self.session_logs, self)
+            dlg.setWindowTitle("\u6e38\u620f\u7ed3\u675f \u2014 \u590d\u76d8\u603b\u89c8")
+            dlg.exec()
         ans = QMessageBox.question(
             self, "\u6e38\u620f\u7ed3\u675f",
-            "\u60a8\u7684\u7b79\u7801\u5df2\u7528\u5b8c\uff01\n\u662f\u5426\u91cd\u65b0\u5f00\u59cb\uff1f",
+            "\u60a8\u7684\u7b79\u7801\u5df2\u7528\u5b8c\uff01\u662f\u5426\u91cd\u65b0\u5f00\u59cb\uff1f",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if ans == QMessageBox.StandardButton.Yes:
@@ -795,6 +982,7 @@ class BaccaratMainWindow(QMainWindow):
             self.game = BaccaratGame(self.mode, self.num_decks)
             self.current_bets.clear()
             self.last_bets.clear()
+            self.session_logs.clear()
             for c in self.p_cw + self.b_cw:
                 c.clear()
             self.p_pts.setText('')
@@ -804,17 +992,19 @@ class BaccaratMainWindow(QMainWindow):
             for bw in self.bet_ws.values():
                 bw.set_highlight('')
             self.repeat_btn.setEnabled(False)
-            # clear road
-            while self._road_hlayout.count():
-                item = self._road_hlayout.takeAt(0)
-                w = item.widget()
-                if w:
-                    w.deleteLater()
-            self._road_count = 0
+            self.shoe_number = 1
+            self._clear_road()
             self._update_payouts()
             self._update_all()
         else:
             self.close()
+
+    # ============================================================== #
+    #  Session review
+    # ============================================================== #
+    def _show_review(self):
+        dlg = SessionReviewDialog(self.session_logs, self)
+        dlg.exec()
 
     # ============================================================== #
     #  Mode switch
@@ -863,8 +1053,29 @@ class BaccaratMainWindow(QMainWindow):
             f"\u724c\u9774: {self.game.shoe.remaining}\u5f20")
 
     def _refresh_deal_btn(self):
-        ok = bool(self.current_bets) and not self.is_dealing
+        ok = not self.is_dealing
         self.deal_btn.setEnabled(ok)
+
+    def _clear_road(self):
+        """Full reset — used when restarting the game."""
+        while self._road_hlayout.count():
+            item = self._road_hlayout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        self._road_count = len(self.game.history)
+        self._road_shoe_offset = self._road_count
+
+    def _clear_road_before_current(self):
+        """Clear road but keep the current (last) round for re-render."""
+        while self._road_hlayout.count():
+            item = self._road_hlayout.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+        # set to one before current so _refresh_road will render this round
+        self._road_count = len(self.game.history) - 1
+        self._road_shoe_offset = self._road_count
 
     # tag colours for road map
     _TAG_CLR = {
@@ -879,7 +1090,7 @@ class BaccaratMainWindow(QMainWindow):
         # only append new rounds
         while self._road_count < len(history):
             r = history[self._road_count]
-            num = self._road_count + 1
+            num = self._road_count - self._road_shoe_offset + 1
             self._road_count += 1
 
             wc = {'banker': '#EF5350', 'player': '#42A5F5', 'tie': '#66BB6A'}[r.winner]
